@@ -1,0 +1,23 @@
+{
+  "fill" : { "automatic-gradient" : "srgb:0.10000,0.10000,0.11000,1.00000" },
+  "groups" : [
+    {
+      "layers" : [
+        { "glass" : true, "image-name" : "caret.png", "name" : "caret" }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : false, "value" : 0.5 }
+    },
+    {
+      "layers" : [
+        { "glass" : true, "image-name" : "voice4.png", "name" : "voice4", "opacity" : 0.74 },
+        { "glass" : true, "image-name" : "voice3.png", "name" : "voice3", "opacity" : 0.6 },
+        { "glass" : true, "image-name" : "voice2.png", "name" : "voice2", "opacity" : 0.44 },
+        { "glass" : true, "image-name" : "voice1.png", "name" : "voice1", "opacity" : 0.3 }
+      ],
+      "shadow" : { "kind" : "neutral", "opacity" : 0.5 },
+      "translucency" : { "enabled" : true, "value" : 0.5 }
+    }
+  ],
+  "supported-platforms" : { "squares" : [ "macOS" ] }
+}
