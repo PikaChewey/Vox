@@ -1,4 +1,5 @@
 import Foundation
+import ServiceManagement
 import SwiftUI
 
 /// Which physical key acts as push-to-talk. All are modifier keys so they never type a character.
@@ -298,5 +299,18 @@ final class Settings: ObservableObject, @unchecked Sendable {
     private static func loadJSON<T: Decodable>(_ d: UserDefaults, _ key: String) -> T? {
         guard let data = d.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+}
+
+/// Open at login, via the system's own login-item list (System Settings › General › Login Items). The system is
+/// the source of truth, so turning it off there shows up here too; nothing is stored in UserDefaults.
+enum LoginItem {
+    static var status: SMAppService.Status { SMAppService.mainApp.status }
+    static var isEnabled: Bool { status == .enabled }
+    /// On but waiting for the user to allow it in System Settings.
+    static var needsApproval: Bool { status == .requiresApproval }
+
+    static func set(_ on: Bool) throws {
+        if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import ServiceManagement
 import SwiftUI
 
 enum Section: String, CaseIterable, Identifiable {
@@ -431,10 +432,42 @@ struct SettingsPage: View {
     @State private var imOK = HotkeyMonitor.inputMonitoringGranted
     @State private var micOK = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @State private var mics = AudioDevices.inputDevices()
+    @State private var openAtLogin = LoginItem.isEnabled
+    @State private var loginNeedsApproval = LoginItem.needsApproval
+    @State private var loginError: String?
+
+    private var openAtLoginBinding: Binding<Bool> {
+        Binding(get: { openAtLogin }, set: { on in
+            do { try LoginItem.set(on); loginError = nil } catch { loginError = error.localizedDescription }
+            refreshLoginItem()
+        })
+    }
+
+    private var openAtLoginDetail: String {
+        if let loginError { return "Couldn't change it: \(loginError)" }
+        if loginNeedsApproval { return "Allow Vox in System Settings › General › Login Items." }
+        return "Vox starts quietly in the menu bar when you log in."
+    }
+
+    private func refreshLoginItem() {
+        openAtLogin = LoginItem.isEnabled
+        loginNeedsApproval = LoginItem.needsApproval
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             PageHeader(title: "Settings")
+
+            InkGroup("General") {
+                LabeledRow("Open at login", detail: openAtLoginDetail, last: true) {
+                    if loginNeedsApproval {
+                        Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
+                            .buttonStyle(OutlineButtonStyle(compact: true))
+                    } else {
+                        InkSwitch(isOn: openAtLoginBinding)
+                    }
+                }
+            }
 
             InkGroup("Permissions") {
                 LabeledRow("Microphone", detail: "Only while you hold the key.") { permission(micOK) { Task { micOK = await AudioRecorder.requestPermission() } } }
@@ -511,7 +544,10 @@ struct SettingsPage: View {
             axOK = HotkeyMonitor.accessibilityTrusted
             imOK = HotkeyMonitor.inputMonitoringGranted
             micOK = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            refreshLoginItem()
         }
+        // Coming back from System Settings: pick up a login item allowed or removed there.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in refreshLoginItem() }
     }
 
     @ViewBuilder private func permission(_ ok: Bool, action: @escaping () -> Void) -> some View {

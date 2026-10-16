@@ -53,7 +53,7 @@ brew install llama.cpp        # free local LLM runtime for Smart cleanup
 open /Applications/Vox.app
 ```
 
-Onboarding walks you through Microphone, Accessibility and Input Monitoring, picking your key, and a practice box. Tip: set System Settings → Keyboard → "Press 🌐 key to" → **Do Nothing**.
+Onboarding walks you through Microphone, Accessibility and Input Monitoring, picking your key, and a practice box. Turn on Settings › General › **Open at login** so it is always ready. Tip: set System Settings → Keyboard → "Press 🌐 key to" → **Do Nothing**.
 
 | Action | Keys (default trigger: fn) |
 |---|---|
