@@ -147,13 +147,29 @@ final class OverlayController {
         switch p { case .listening, .command: return true; default: return false }
     }
 
+    init() {
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.position() }
+        }
+        // Swiped to another Space (or full-screen app) while the island is up: follow it there.
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.model.phase != .hidden else { return }
+                self.replacePanel()
+                self.panel?.orderFrontRegardless()
+            }
+        }
+    }
+
     func show(_ phase: OverlayModel.Phase) {
         hideWork?.cancel()
         let wasHidden = model.phase == .hidden
         // A new recording never inherits the last one's transcript (lock/shift switches keep it).
         if wasHidden || (Self.isLive(phase) && !Self.isLive(model.phase)) { model.reset() }
-        ensurePanel()
-        if wasHidden { position() }
+        // A fresh window every time the island opens. A long-lived panel stays tied to the Spaces it was first
+        // shown on — each full-screen app has its own — and silently never appears on the others, even with
+        // .canJoinAllSpaces + .fullScreenAuxiliary. A new one joins the Space you're on now.
+        if wasHidden || panel == nil { replacePanel() }
         panel?.orderFrontRegardless()
         model.phase = phase
         switch phase {
@@ -184,10 +200,13 @@ final class OverlayController {
         DispatchQueue.main.asyncAfter(deadline: .now() + s, execute: w)
     }
 
-    private func ensurePanel() {
-        guard panel == nil else { return }
+    /// Swaps in a new panel positioned on the current screen; the old one (if any) is ordered out and released.
+    private func replacePanel() {
+        let old = panel
         let p = OverlayPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize),
                              styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        p.isReleasedWhenClosed = false
+        p.hidesOnDeactivate = false
         p.isFloatingPanel = true
         p.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         p.backgroundColor = .clear
@@ -199,9 +218,8 @@ final class OverlayController {
         p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         p.contentView = NSHostingView(rootView: root())
         panel = p
-        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.position() }
-        }
+        position()
+        old?.orderOut(nil)
     }
 
     private func root() -> OverlayRoot {

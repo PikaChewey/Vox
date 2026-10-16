@@ -133,7 +133,7 @@ final class GlobalHotKey {
             }, 1, &spec, nil, nil)
             Self.installed = true
         }
-        RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), EventHotKeyID(signature: OSType(0x534F5454), id: id),
+        RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), EventHotKeyID(signature: OSType(0x564F5820) /* "VOX " */, id: id),
                             GetApplicationEventTarget(), 0, &ref)
     }
 
