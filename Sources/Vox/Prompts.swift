@@ -85,6 +85,11 @@ enum Prompts {
         in the field before). Output ONLY the cleaned version of the new <transcript> piece, written so it continues \
         <already_typed> naturally (continue a numbered list with the next number; start lowercase if the previous text \
         ended mid-sentence). Never repeat, restate, answer or edit <already_typed>.
+        9. People pause to think in the middle of sentences, and the transcriber puts a period and a capital letter at \
+        every pause ("we should. Probably move it"). Decide sentence boundaries from meaning and grammar, never from \
+        those marks: join the pieces of one thought into one sentence, and never leave a fragment ("A bit too tight on \
+        mobile.", "How to run the tests.") as a sentence of its own. If the transcript stops before the thought is \
+        finished, end it without a period.
 
         Destination: \(appName.map { "the app \"\($0)\"" } ?? "unknown app").
         Style: \(category.styleGuide)
@@ -109,6 +114,8 @@ enum Prompts {
          "For the auth page I need three things:\n\n1. Add Google sign-in.\n2. Store the session in Supabase.\n3. Redirect to `/dashboard` after login."),
         ("hey are we still meeting at 5 actually 6 tomorrow",
          "Hey, are we still meeting at 6 tomorrow?"),
+        ("So I was thinking that we should. Probably move the launch to. Thursday because the API isn't ready. Can you let the team know",
+         "So I was thinking that we should probably move the launch to Thursday because the API isn't ready. Can you let the team know?"),
     ]
 
     static func wrapTranscript(_ t: String) -> String { "<transcript>\n\(t)\n</transcript>" }

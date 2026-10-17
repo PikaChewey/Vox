@@ -19,6 +19,9 @@ final class LiveDictation {
     /// Each committed raw segment, in order (the incremental cleaner subscribes here). `tight` = the cut fell
     /// mid-phrase (a word was heard on both sides), so the piece continues the previous one with no punctuation.
     var onSegment: ((_ raw: String, _ tight: Bool) -> Void)?
+    /// The last segment was re-heard together with the one after it (a pause that didn't end the sentence):
+    /// this text replaces it, and the newer segment is not delivered on its own.
+    var onReplaceLast: ((_ raw: String) -> Void)?
     /// Test-only VAD trace (`VOX_VAD_TRACE=1`): one line per tick.
     var trace: ((String) -> Void)?
 
@@ -40,6 +43,8 @@ final class LiveDictation {
     private var generation = 0              // bumps on every commit; stale partials are dropped
 
     private(set) var segments: [String] = []
+    private var ranges: [Range<Int>] = []   // where each segment sits in the recording
+    private var fullAudio: [Float]?         // the whole recording, once the key is up
     private var displaySegments: [String] = []
     private var partial = ""
     /// Previews of segments that were committed but whose final text hasn't arrived yet (~100 ms) — kept on
@@ -51,7 +56,7 @@ final class LiveDictation {
     // Tunables (20 ms frames).
     private let pauseFrames = 22            // 0.44 s of silence ends a long segment
     private let longPauseFrames = 35        // 0.7 s for segments under 5 s
-    private let keepSilenceFrames = 8       // keep 0.16 s of the pause in the segment
+    private let keepSilenceFrames = 16      // keep 0.32 s of the pause in the segment
     private let minVoicedFrames = 30        // ≥ 0.6 s of speech before a pause can commit
     private let minSegmentSamples = Int(1.6 * 16_000)
     private let forceSamples = 14 * 16_000
@@ -147,10 +152,34 @@ final class LiveDictation {
         if !partial.isEmpty { carried[commitIndex] = partial }
         partial = ""
         let samples = recorder.slice(range)
-        enqueueFinal(samples, index: commitIndex)
+        enqueueFinal(samples, range: range, index: commitIndex)
     }
 
-    private func enqueueFinal(_ samples: [Float], index: Int) {
+    private func audio(_ r: Range<Int>) -> [Float] {
+        guard let a = fullAudio else { return recorder.slice(r) }
+        return Array(a[r.clamped(to: 0..<a.count)])
+    }
+
+    /// Parakeet's window is 15 s; a re-heard pair stays inside it.
+    private static let rejoinSamples = 14 * 16_000
+
+    /// A segment heard alone loses its edges: Parakeet ends it with a period, and a word just before the pause
+    /// comes out wrong ("…the app and" → "the appan."). When the pause didn't end the sentence and both segments
+    /// fit in one window, hear them again as one — with the pause inside, Parakeet punctuates across it correctly.
+    private func rejoin(_ text: String, range: Range<Int>, gate: Float) async -> (String, Range<Int>)? {
+        guard let prev = segments.last, let prevRange = ranges.last, Boundary.kind(after: prev, before: text) != .ends else { return nil }
+        let both = prevRange.lowerBound..<range.upperBound
+        guard both.count <= Self.rejoinSamples else { return nil }
+        let trimmed = AudioRecorder.trimSilence(audio(both), threshold: gate)
+        guard trimmed.count > 16_000 / 4, let t = try? await transcriber.transcribe(AudioRecorder.normalized(trimmed)),
+              !t.isEmpty, !Task.isCancelled else { return nil }
+        // Sanity: the pair must still hold (nearly) all the words of both halves.
+        let expected = RuleCleaner.wordCount(prev) + RuleCleaner.wordCount(text)
+        guard RuleCleaner.wordCount(t) * 10 >= expected * 7 else { return nil }
+        return (t, both)
+    }
+
+    private func enqueueFinal(_ samples: [Float], range: Range<Int>, index: Int) {
         let prev = chain
         let transcriber = self.transcriber
         // Trim only what is clearly room noise: quiet words can sit at ~1–2× the floor (a real-mic test lost
@@ -164,12 +193,38 @@ final class LiveDictation {
                 text = try? await transcriber.transcribe(AudioRecorder.normalized(trimmed))
             }
             guard let self else { return }
-            self.carried[index] = nil
-            if let text, !text.isEmpty, !Task.isCancelled { self.append(text) } else { self.publish() }
+            guard let text, !text.isEmpty, !Task.isCancelled else { self.carried[index] = nil; self.publish(); return }
+            if let (joined, both) = await self.rejoin(text, range: range, gate: gate) {
+                self.carried[index] = nil
+                self.replaceLast(joined, range: both)
+            } else {
+                self.carried[index] = nil
+                self.append(text, range: range)
+            }
         }
     }
 
-    private func append(_ raw0: String) {
+    /// What the notch shows for segment `i`: no period or capital at a thinking pause. May edit segment i−1's text.
+    private func shown(_ raw: String, at i: Int) -> String {
+        var shown = RuleCleaner.clean(raw)
+        if i > 0, Boundary.kind(after: segments[i - 1], before: raw) != .ends {
+            let prevShown = displaySegments[i - 1]
+            if let l = prevShown.last, ".?".contains(l), !prevShown.hasSuffix("..") { displaySegments[i - 1].removeLast() }
+            shown = IncrementalCleaner.decapitalized(shown)
+        }
+        return shown
+    }
+
+    private func replaceLast(_ raw: String, range: Range<Int>) {
+        let i = segments.count - 1
+        segments[i] = raw
+        ranges[i] = range
+        displaySegments[i] = shown(raw, at: i)
+        publish()
+        onReplaceLast?(raw)
+    }
+
+    private func append(_ raw0: String, range: Range<Int>) {
         var raw = raw0
         var tight = false
         // A cut can land inside a word, so both sides hear it ("…just how." + "How important…"): drop the echo.
@@ -185,8 +240,11 @@ final class LiveDictation {
             }
         }
         guard !raw.trimmingCharacters(in: .whitespaces).isEmpty else { publish(); return }
+        // The live transcript doesn't end a sentence at a thinking pause either.
+        let text = shown(raw, at: segments.count)
         segments.append(raw)
-        displaySegments.append(RuleCleaner.clean(raw))
+        ranges.append(range)
+        displaySegments.append(text)
         publish()
         onSegment?(raw, tight)
     }
@@ -224,12 +282,13 @@ final class LiveDictation {
         timer?.cancel(); timer = nil
         generation += 1
         partial = ""
+        fullAudio = audio
         // The tail after the last commit is often just the room (you stopped talking, then let go): only transcribe
         // it if some of it rises above the noise floor, or Parakeet may "hear" a word in the hum ("Yeah.").
         if regionStart < audio.count, Self.hasSpeech(audio[regionStart...], above: noise * 1.6) {
             trace?(String(format: "final %.2f–%.2f s", Double(regionStart) / 16_000, Double(audio.count) / 16_000))
             commitIndex += 1
-            enqueueFinal(Array(audio[regionStart...]), index: commitIndex)
+            enqueueFinal(Array(audio[regionStart...]), range: regionStart..<audio.count, index: commitIndex)
         }
         await chain?.value
         publish()
@@ -249,6 +308,68 @@ final class LiveDictation {
             }
         }
         return loud >= 6
+    }
+}
+
+/// What a pause between two committed segments means. Parakeet hears each segment on its own, so it ends every
+/// one with a period and capitalizes the next: a pause to think ("we should… probably move it") looks exactly
+/// like a full stop. A pause is not evidence, so this decides from the words on either side.
+enum Boundary {
+    enum Kind { case continues, ends, unsure }
+
+    /// Words a sentence almost never ends on ("…we should", "…because", "…to be", "…look at the").
+    private static let dangling: Set<String> = [
+        "a", "an", "the", "to", "of", "in", "on", "at", "by", "for", "from", "with", "into", "onto", "about", "as", "than",
+        "and", "or", "but", "nor", "because", "since", "although", "though", "unless", "until", "if", "when", "while",
+        "where", "whether", "that", "which", "who", "whose", "whom", "my", "your", "our", "their", "his", "her", "its",
+        "is", "are", "was", "were", "be", "been", "being", "am", "will", "would", "can", "could", "should", "shall",
+        "may", "might", "must", "do", "does", "did", "has", "had", "not", "very", "really", "just", "i", "we", "they",
+        "he", "she", "going", "gonna", "wanna", "gotta", "some", "every", "each", "such", "making", "getting",
+        "trying", "um", "uh", "er",
+    ]
+    /// First words that carry on whatever came before.
+    private static let continuing: Set<String> = [
+        "and", "or", "but", "nor", "of", "to", "with", "for", "in", "on", "at", "by", "from", "as", "which", "who",
+        "whom", "whose", "that", "than", "because", "while", "when", "where", "if", "into", "about", "plus", "unless",
+        "until", "since", "though", "although", "whether",
+    ]
+    /// First words that usually open a new sentence.
+    private static let starters: Set<String> = [
+        "i", "i'm", "i've", "i'll", "i'd", "we", "we're", "we've", "we'll", "you", "you're", "you'll", "they", "they're",
+        "he", "she", "it's", "there", "there's", "here's", "this", "that's", "so", "okay", "ok", "also", "thanks",
+        "thank", "please", "can", "could", "would", "will", "do", "does", "did", "is", "are", "let's", "let", "hey", "hi", "hello", "yeah", "yes", "no", "nope", "sure", "now", "next", "first",
+        "second", "third", "finally", "anyway", "anyways", "oh", "well", "alright", "great", "cool", "nice", "sorry",
+        "maybe", "hopefully", "honestly", "basically", "otherwise", "meanwhile", "however", "after", "before",
+    ]
+
+    private static func bare(_ w: Substring?) -> String {
+        (w.map(String.init) ?? "").lowercased().trimmingCharacters(in: .punctuationCharacters.subtracting(["'"]))
+    }
+
+    static func kind(after prev: String, before next: String) -> Kind {
+        let p = prev.trimmingCharacters(in: .whitespacesAndNewlines), n = next.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let end = p.last, let start = n.first else { return .ends }
+        if ",;-–—".contains(end) { return .continues }
+        // A list item or a list intro keeps its own line.
+        if end == ":" || n.range(of: #"^(?:\d+[.)]|[-•*])\s"#, options: .regularExpression) != nil { return .ends }
+        if dangling.contains(bare(p.split(separator: " ").last)) { return .continues }
+        let first = bare(n.split(separator: " ").first)
+        if start.isLowercase || continuing.contains(first) { return .continues }
+        // Even "?" at a cut is a guess ("Can you update the README so that it?" + "Explains how…"): it only ends the
+        // sentence when the next words clearly start a new one.
+        if starters.contains(first) { return .ends }
+        return .unsure
+    }
+
+    /// Joins two raw segments across a pause: drops the period Parakeet put at the cut and the capital it gave the
+    /// next word. A "?" is dropped only for a clear continuation; when unsure, it stays for the model to weigh.
+    static func soften(_ prev: String, _ next: String, kind: Kind) -> String {
+        var p = prev.trimmingCharacters(in: .whitespacesAndNewlines)
+        var n = next.trimmingCharacters(in: .whitespacesAndNewlines)
+        let marks: String = kind == .continues ? ".?!" : "."
+        if let l = p.last, marks.contains(l), !p.hasSuffix("..") { p.removeLast() }
+        if let l = p.last, !"?!".contains(l) { n = IncrementalCleaner.decapitalized(n) }
+        return p + " " + n
     }
 }
 
@@ -272,6 +393,39 @@ final class IncrementalCleaner {
     private var pieces: [Piece] = []
     /// A tiny fragment waiting to be joined with the next piece.
     private var pending: String?
+    /// How the last `add` changed things, so `replaceLast` can take it back: piece count and pending before it,
+    /// the piece it merged away (if any), and its `tight` flag.
+    private var lastAdd: (count: Int, pending: String?, removed: Piece?, tight: Bool)?
+    /// Pieces just taken off the end, still running: a re-launch of the same text at the same place reuses one
+    /// (a re-heard segment usually repeats the finished sentences before it word for word). The rest are cancelled.
+    private var stale: [(index: Int, key: String, piece: Piece)] = []
+
+    private static func reuseKey(_ s: String) -> String {
+        s.lowercased().filter { $0.isLetter || $0.isNumber || $0 == " " }.split(separator: " ").joined(separator: " ")
+    }
+
+    private func stash(_ p: Piece) {
+        stale.append((pieces.count, Self.reuseKey(p.raw), p))
+    }
+
+    private func dropStale() {
+        for s in stale { s.piece.task.cancel() }
+        stale.removeAll()
+    }
+
+    /// "Finished sentences. Open one" → ("Finished sentences.", "Open one"): splits at the last sentence end Parakeet
+    /// heard inside the text (with the audio on both sides, so it's reliable), keeping both halves worth an LLM call.
+    static func splitFinished(_ text: String) -> (head: String, tail: String)? {
+        guard !text.contains("\n"), text.range(of: #"(?:^|\s)(?:\d+[.)]|[-•*])\s"#, options: .regularExpression) == nil else { return nil }
+        let ends = try! NSRegularExpression(pattern: #"(?<=[a-z0-9\)"'’]{2})[.!?]\s+(?=[A-Z])"#)
+        let ns = text as NSString
+        for m in ends.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let head = ns.substring(to: m.range.location + 1).trimmingCharacters(in: .whitespaces)
+            let tail = ns.substring(from: m.range.location + m.range.length).trimmingCharacters(in: .whitespaces)
+            if RuleCleaner.wordCount(head) >= 4, RuleCleaner.wordCount(tail) >= 3 { return (head, tail) }
+        }
+        return nil
+    }
     private var finishing = false
     private(set) var engines = Set<String>()
 
@@ -289,6 +443,9 @@ final class IncrementalCleaner {
 
     /// A committed segment arrived: clean it right away (while you keep talking).
     func add(_ raw: String, tight: Bool = false) {
+        var removed: Piece?
+        let before = (count: pieces.count, pending: pending, tight: tight)
+        defer { lastAdd = (before.count, before.pending, removed, before.tight); dropStale() }
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         var tight = tight
         if let p = pending { text = p + " " + text; pending = nil; tight = false }
@@ -297,8 +454,8 @@ final class IncrementalCleaner {
         // joins the piece before it; anything else ("okay so…") waits for the next piece.
         if !finishing, RuleCleaner.wordCount(text) < 4 {
             if let last = pieces.last, tight || Self.continues(text) {
-                last.task.cancel()
-                pieces.removeLast()
+                removed = pieces.removeLast()
+                stash(last)
                 launch(last.raw + " " + text, tight: last.tight)
             } else {
                 pending = text
@@ -309,13 +466,49 @@ final class IncrementalCleaner {
         // tail ("the footer.") also joins the piece before it rather than becoming its own sentence.
         let isCorrection = Self.correctionStart.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
         if let last = pieces.last, isCorrection || (finishing && RuleCleaner.wordCount(text) < 4) {
-            last.task.cancel()
-            pieces.removeLast()
+            removed = pieces.removeLast()
+            stash(last)
             text = last.raw + " " + text
             tight = last.tight
+        } else if let last = pieces.last {
+            // Be slow to end a sentence at a pause. Unless the words say it ended ("…this morning." + "Can you…"),
+            // the two pieces are cleaned together, so the model sees the whole sentence instead of two halves
+            // that each get a period. With no LLM, only a clear continuation is merged (the rules can't re-punctuate).
+            let kind = Boundary.kind(after: last.raw, before: text)
+            let merge = kind == .continues || (kind == .unsure && llm != nil)
+            if merge, RuleCleaner.wordCount(last.raw) + RuleCleaner.wordCount(text) <= Self.mergeWords {
+                removed = pieces.removeLast()
+                stash(last)
+                text = Boundary.soften(last.raw, text, kind: kind)
+                tight = last.tight
+            } else if kind == .continues {
+                // Too long to merge: still joined mid-sentence, with no period at the cut.
+                tight = true
+                text = Self.decapitalized(text)
+            }
         }
-        launch(text, tight: tight)
+        // Finished sentences go first as their own piece, so key-up only waits on the sentence still open.
+        if removed != nil || !stale.isEmpty, let (head, tail) = Self.splitFinished(text) {
+            launch(head, tight: tight)
+            launch(tail)
+        } else {
+            launch(text, tight: tight)
+        }
     }
+
+    /// The segment last passed to `add` was re-heard together with the next one: undo that `add` and add this instead.
+    func replaceLast(_ raw: String) {
+        guard let snap = lastAdd else { add(raw); return }
+        lastAdd = nil
+        let keep = snap.count - (snap.removed == nil ? 0 : 1)
+        while pieces.count > keep { stash(pieces.removeLast()) }
+        if let r = snap.removed { launch(r.raw, tight: r.tight) }
+        pending = snap.pending
+        add(raw, tight: snap.tight)
+    }
+
+    /// Merged pieces stop growing here (about two long sentences) so key-up never waits on a huge piece.
+    private static let mergeWords = 60
 
     private static let continuationWords: Set<String> = ["and", "or", "but", "nor", "of", "to", "with", "for", "in", "on",
         "at", "by", "from", "as", "which", "who", "whom", "whose", "that", "than", "because", "then", "while", "when",
@@ -332,6 +525,14 @@ final class IncrementalCleaner {
     func beginFinish() { finishing = true }
 
     private func launch(_ source: String, tight: Bool = false) {
+        let key = Self.reuseKey(source)
+        if let i = stale.firstIndex(where: { $0.index == pieces.count && $0.key == key }) {
+            var p = stale.remove(at: i).piece
+            p.raw = source
+            p.tight = tight
+            pieces.append(p)
+            return
+        }
         let previous = pieces.last?.task
         let earlier = pieces.map(\.task)
         let earlierTight = Self.tightIndices(pieces)
@@ -359,7 +560,7 @@ final class IncrementalCleaner {
     }
 
     /// "Important it is…" → "important it is…" (leaves "I", acronyms and names alone).
-    static func decapitalized(_ t: String) -> String {
+    nonisolated static func decapitalized(_ t: String) -> String {
         guard let first = t.split(separator: " ").first.map(String.init), first.first?.isUppercase == true, first != "I",
               !first.hasPrefix("I'"), first.dropFirst().allSatisfy({ !$0.isUppercase }),
               Words.isReal(first.lowercased().trimmingCharacters(in: .punctuationCharacters)) else { return t }

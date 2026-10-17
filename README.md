@@ -4,7 +4,7 @@
 
 > v3: your words appear in the notch *while you speak* (committed text solid, the words still being recognized in
 > italic), and long dictations finish in under a second: Vox transcribes and polishes each phrase while you're
-> still talking. A 75-second monologue goes from key-up to pasted text in ≈0.85 s.
+> still talking. A 55-second monologue goes from key-up to pasted text in ≈1.1 s.
 
 Vox is a free, open-source, 100% on-device Wispr Flow alternative for macOS. Hold a key, speak messy, and clean text lands wherever your cursor is.
 
@@ -22,12 +22,12 @@ No account, no subscription, no word limits, no cloud. Your voice never leaves y
 | Learns from your corrections | ✓ | ✓ fix a word after it's pasted and it's added to your dictionary |
 | “Press enter” to send | experimental | ✓ |
 | Live transcript while you talk | — | ✓ in the notch: solid when final, *italic* while still being recognized |
-| Time from key-up to text (75 s monologue) | several seconds | ≈0.85 s: phrases are transcribed and cleaned while you speak |
+| Time from key-up to text (55 s monologue) | several seconds | ≈1.1 s: phrases are transcribed and cleaned while you speak |
 | Privacy | audio + context sent to servers | nothing leaves your Mac |
 
 ## Highlights
 
-- **Streams while you speak.** A tiny voice-activity detector finds your pauses. Each phrase is transcribed once by Parakeet on the Neural Engine and then polished by the local LLM in the background. The phrase you're still saying gets a cheap preview about once a second. On key-up only the last phrase is left, so long dictations finish as fast as short ones.
+- **Streams while you speak.** A tiny voice-activity detector finds your pauses. Each phrase is transcribed by Parakeet on the Neural Engine and polished by the local LLM in the background. A pause to think doesn't end a sentence: unless the words say it ended, the phrases on both sides are heard again as one and cleaned together, so you never get "we should. Probably move it". The phrase you're still saying gets a cheap preview about once a second. On key-up only the last phrase is left, so long dictations finish as fast as short ones.
 - **Notch island.** The recording UI grows out of the MacBook notch. It shows a dot-matrix level meter and up to four lines of live transcript, steps three dots while it finishes, and shows `+42` when the text lands. Displays without a notch get a black capsule under the menu bar.
 - **Styles per app.** Prompts for Claude, Cursor or a terminal get lists and `backticks`. Discord gets casual (no final period). Email gets proper sentences.
 - **Never loses a dictation.**
@@ -72,7 +72,7 @@ A native Swift/SwiftUI menu-bar app.
 | File | What it does |
 |---|---|
 | `DictationController.swift` | The pipeline and state machine |
-| `LiveDictation.swift` | Streaming: pause-aware segmenter, partial transcripts, and incremental per-phrase LLM cleanup with boundary merging |
+| `LiveDictation.swift` | Streaming: pause-aware segmenter, partial transcripts, and incremental per-sentence LLM cleanup; a pause to think never ends a sentence |
 | `Overlay.swift` | The notch island |
 | `Transcriber.swift` | FluidAudio / Parakeet |
 | `LLM.swift` | llama-server child process with idle sleep and prompt-cache prewarm; Apple Foundation Models |

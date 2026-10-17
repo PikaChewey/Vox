@@ -105,6 +105,7 @@ final class DictationController: ObservableObject {
             if state == .recording, !locked, mode == .dictate {
                 mode = .command
                 live?.onSegment = nil          // the speech is now an instruction, not text to polish
+                live?.onReplaceLast = nil
                 cleaner?.cancelAll()
                 cleaner = nil
                 overlay.show(.command)
@@ -195,6 +196,7 @@ final class DictationController: ObservableObject {
                                        beforeCursor: ctx.textBeforeCursor, timeout: Settings.shared.llmTimeoutSeconds)
             cleaner = c
             l.onSegment = { [weak c] raw, tight in c?.add(raw, tight: tight) }
+            l.onReplaceLast = { [weak c] raw in c?.replaceLast(raw) }
         } else {
             cleaner = nil
         }

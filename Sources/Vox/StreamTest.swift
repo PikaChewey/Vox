@@ -38,6 +38,10 @@ enum StreamTest {
                 print(String(format: "%6.1fs ■ committed%@: %@", Date().timeIntervalSince(t0), tight ? " (tight)" : "", raw))
                 cleaner.add(raw, tight: tight)
             }
+            live.onReplaceLast = { raw in
+                print(String(format: "%6.1fs ■ re-heard with the previous: %@", Date().timeIntervalSince(t0), raw))
+                cleaner.replaceLast(raw)
+            }
             let cpu0 = cpuSeconds()
             live.start()
             // Feed 100 ms chunks at (speed ×) real time.
@@ -98,6 +102,7 @@ enum StreamTest {
                 print(String(format: "%5.1fs │ %@ %@", Date().timeIntervalSince(t0), String(c.suffix(60)), p.isEmpty ? "" : "⟨\(p.suffix(40))⟩"))
             }
             live.onSegment = { raw, tight in cleaner.add(raw, tight: tight) }
+            live.onReplaceLast = { raw in cleaner.replaceLast(raw) }
             try recorder.start()
             print("mic: \(recorder.deviceName)")
             live.start()

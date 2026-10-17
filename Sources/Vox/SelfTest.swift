@@ -59,6 +59,18 @@ enum SelfTest {
             show("join: tight cut", IncrementalCleaner.join(["As president, I know just how.", "Important it is to have a partner."], tight: [1]))
             show("decapitalize", IncrementalCleaner.decapitalized("Important it is") + " / " + IncrementalCleaner.decapitalized("Reagan was") + " / " + IncrementalCleaner.decapitalized("I am"))
             show("join: after list", IncrementalCleaner.join(["1. One\n2. Two", "Thanks."]).replacingOccurrences(of: "\n", with: " ⏎ "))
+            func pause(_ a: String, _ b: String) -> String {
+                let k = Boundary.kind(after: a, before: b)
+                return "\(k)" + (k == .ends ? "" : " → " + Boundary.soften(a, b, kind: k))
+            }
+            show("pause: dangling word", pause("So I was thinking that we should.", "Probably move it to Thursday."))
+            show("pause: comma", pause("I really like the colors,", "But the spacing is tight."))
+            show("pause: sentence end", pause("I finished the report this morning.", "Can you review it?"))
+            show("pause: unsure", pause("The app thinks.", "The sentence is over."))
+            show("pause: '?' at a cut", pause("Can you update the README so that it?", "Explains how to install it."))
+            show("pause: list item", pause("I need three things:", "1. Add sign in."))
+            show("split finished", IncrementalCleaner.splitFinished("First fix the login bug on the settings page. Then deploy to staging and").map { "\($0.head) | \($0.tail)" } ?? "nil")
+            show("split (one sentence)", IncrementalCleaner.splitFinished("So we should probably move it because Friday is a holiday.").map { "\($0.head) | \($0.tail)" } ?? "nil")
         }
     }
 
