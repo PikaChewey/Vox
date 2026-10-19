@@ -352,26 +352,40 @@ struct DictionaryPage: View {
     @ObservedObject var controller: DictationController
     @State private var term = ""
     @State private var sounds = ""
+    /// Shown under the add row, e.g. "Updated “Codex”".
+    @State private var note: String?
+    @State private var editing: UUID?
+    @State private var editTerm = ""
+    @State private var editSounds = ""
+    @FocusState private var focus: Field?
+    private enum Field: Hashable { case term, sounds }
+
+    init(settings: Settings, controller: DictationController, editing: DictionaryTerm? = nil, note: String? = nil) {
+        self.settings = settings
+        self.controller = controller
+        // `editing` is for --render-ui: shows a row open for editing.
+        _editing = State(initialValue: editing?.id)
+        _editTerm = State(initialValue: editing?.term ?? "")
+        _editSounds = State(initialValue: editing?.soundsLike ?? "")
+        _note = State(initialValue: note)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            PageHeader(title: "Dictionary", subtitle: "Names and jargon spelled your way. Fix a word right after it's pasted and Vox learns it.")
-            HStack(spacing: 8) {
-                TextField("Word", text: $term).textFieldStyle(.roundedBorder).frame(width: 180)
-                TextField("Often heard as (optional)", text: $sounds).textFieldStyle(.roundedBorder)
-                Button("Add") { add() }.keyboardShortcut(.defaultAction).buttonStyle(InkButtonStyle())
-                    .disabled(term.trimmingCharacters(in: .whitespaces).isEmpty)
+            PageHeader(title: "Dictionary", subtitle: "Names and jargon spelled your way. Fix a word right after it's pasted and Vox learns it. Click a word to edit it.")
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    TextField("Word", text: $term).textFieldStyle(.roundedBorder).frame(width: 180)
+                    TextField("Often heard as (optional)", text: $sounds).textFieldStyle(.roundedBorder)
+                    Button("Add") { add() }.keyboardShortcut(.defaultAction).buttonStyle(InkButtonStyle())
+                        .disabled(term.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let note { Text(note).font(.system(size: 11)).foregroundStyle(Color.ink3).transition(.opacity) }
             }
             InkGroup("\(settings.dictionary.count) words") {
                 ForEach(Array(settings.dictionary.enumerated()), id: \.element.id) { i, t in
-                    HStack(spacing: 10) {
-                        Text(t.term).font(.system(size: 12.5, weight: .medium)).frame(width: 170, alignment: .leading)
-                        Text(t.soundsLike.isEmpty ? "—" : t.soundsLike).font(.system(size: 12)).foregroundStyle(Color.ink3).lineLimit(1)
-                        Spacer()
-                        if t.learned { Tag(text: "learned") }
-                        Button { settings.dictionary.removeAll { $0.id == t.id }; refresh() } label: {
-                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.ink4)
-                        }.buttonStyle(.plain).help("Remove")
+                    Group {
+                        if editing == t.id { editRow(t) } else { row(t) }
                     }
                     .padding(.vertical, 7)
                     .overlay(alignment: .bottom) { if i < settings.dictionary.count - 1 { Hairline().opacity(0.6) } }
@@ -387,15 +401,93 @@ struct DictionaryPage: View {
             }
             .onChange(of: settings.vocabularyBoosting) { refresh() }
         }
-        .onDisappear(perform: refresh)
+        .onDisappear { saveEdit(); refresh() }
+    }
+
+    private func row(_ t: DictionaryTerm) -> some View {
+        HStack(spacing: 10) {
+            Button { startEdit(t, focusing: .sounds) } label: {
+                HStack(spacing: 10) {
+                    Text(t.term).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.ink).frame(width: 170, alignment: .leading)
+                    Text(t.soundsLike.isEmpty ? "—" : t.soundsLike).font(.system(size: 12)).foregroundStyle(Color.ink3).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).help("Edit")
+            if t.learned { Tag(text: "learned") }
+            Button { startEdit(t, focusing: .sounds) } label: {
+                Image(systemName: "pencil").font(.system(size: 10, weight: .semibold)).foregroundStyle(Color.ink4)
+            }.buttonStyle(.plain).help("Edit").accessibilityLabel("Edit \(t.term)")
+            Button { settings.dictionary.removeAll { $0.id == t.id }; refresh() } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.ink4)
+            }.buttonStyle(.plain).help("Remove").accessibilityLabel("Remove \(t.term)")
+        }
+    }
+
+    private func editRow(_ t: DictionaryTerm) -> some View {
+        HStack(spacing: 8) {
+            TextField("Word", text: $editTerm).textFieldStyle(.roundedBorder).frame(width: 170)
+                .focused($focus, equals: .term)
+            TextField("Often heard as, separated by commas", text: $editSounds).textFieldStyle(.roundedBorder)
+                .focused($focus, equals: .sounds)
+            Button("Save") { saveEdit() }.buttonStyle(OutlineButtonStyle(compact: true))
+                .disabled(editTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel") { editing = nil }.buttonStyle(OutlineButtonStyle(compact: true))
+        }
+        .onSubmit { saveEdit() }
+        .onExitCommand { editing = nil }
+    }
+
+    private func startEdit(_ t: DictionaryTerm, focusing f: Field) {
+        saveEdit()
+        editTerm = t.term
+        editSounds = t.soundsLike
+        editing = t.id
+        DispatchQueue.main.async { focus = f }
+    }
+
+    private func saveEdit() {
+        guard let id = editing else { return }
+        editing = nil
+        let t = editTerm.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty, let i = settings.dictionary.firstIndex(where: { $0.id == id }) else { return }
+        let sounds = DictionaryTerm.joined(DictionaryTerm.split(editSounds))
+        // Renamed onto a word that's already listed: fold the two together.
+        if let j = settings.dictionary.firstIndex(where: { $0.id != id && $0.term.caseInsensitiveCompare(t) == .orderedSame }) {
+            settings.dictionary[j].soundsLike = DictionaryTerm.merged(settings.dictionary[j].soundsLike, sounds)
+            settings.dictionary[j].learned = false
+            settings.dictionary.remove(at: i)
+        } else {
+            let old = settings.dictionary[i]
+            guard old.term != t || old.soundsLike != sounds else { return }
+            settings.dictionary[i].term = t
+            settings.dictionary[i].soundsLike = sounds
+            settings.dictionary[i].learned = false      // yours now
+        }
+        refresh()
     }
 
     private func add() {
         let t = term.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return }
-        settings.dictionary.insert(DictionaryTerm(term: t, soundsLike: sounds), at: 0)
+        saveEdit()
+        if let i = settings.dictionary.firstIndex(where: { $0.term.caseInsensitiveCompare(t) == .orderedSame }) {
+            // Already there: add the new spellings to it instead of making a duplicate.
+            settings.dictionary[i].soundsLike = DictionaryTerm.merged(settings.dictionary[i].soundsLike, sounds)
+            settings.dictionary[i].learned = false
+            show("Updated “\(settings.dictionary[i].term)”, which was already in your dictionary.")
+        } else {
+            settings.dictionary.insert(DictionaryTerm(term: t, soundsLike: DictionaryTerm.joined(DictionaryTerm.split(sounds))), at: 0)
+            note = nil
+        }
         term = ""; sounds = ""
         refresh()
+    }
+
+    private func show(_ text: String) {
+        withAnimation(Motion.micro) { note = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { if note == text { withAnimation(Motion.micro) { note = nil } } }
     }
 
     private func refresh() { Task { await controller.transcriber.configureVocabulary(settings.dictionary) } }

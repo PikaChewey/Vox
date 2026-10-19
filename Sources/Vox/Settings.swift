@@ -203,8 +203,17 @@ struct DictionaryTerm: Codable, Identifiable, Hashable {
     /// Added automatically after the user corrected a dictation.
     var learned: Bool = false
 
-    var aliases: [String] {
-        soundsLike.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    var aliases: [String] { Self.split(soundsLike) }
+
+    static func split(_ s: String) -> [String] {
+        s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    static func joined(_ parts: [String]) -> String { parts.joined(separator: ", ") }
+    /// `a`'s spellings plus any new ones from `b`, without repeats (ignoring case).
+    static func merged(_ a: String, _ b: String) -> String {
+        var seen = Set<String>(), out: [String] = []
+        for p in split(a) + split(b) where seen.insert(p.lowercased()).inserted { out.append(p) }
+        return joined(out)
     }
 
     enum CodingKeys: String, CodingKey { case id, term, soundsLike, learned }

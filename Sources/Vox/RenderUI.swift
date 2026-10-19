@@ -49,6 +49,12 @@ enum RenderUI {
                  out.appendingPathComponent("page-home-\(suffix).png"))
             save(SettingsPage(controller: c, settings: Settings.shared).padding(32).frame(width: 760).background(Color.canvas).environment(\.colorScheme, scheme),
                  out.appendingPathComponent("page-settings-\(suffix).png"))
+            let ed = Settings.shared.dictionary.first { $0.term.lowercased() == "codex" } ?? Settings.shared.dictionary.first
+            save(DictionaryPage(settings: Settings.shared, controller: c).padding(32).frame(width: 760).background(Color.canvas).environment(\.colorScheme, scheme),
+                 out.appendingPathComponent("page-dictionary-\(suffix).png"))
+            save(DictionaryPage(settings: Settings.shared, controller: c, editing: ed, note: "Updated “Codex”, which was already in your dictionary.")
+                    .padding(32).frame(width: 760).background(Color.canvas).environment(\.colorScheme, scheme),
+                 out.appendingPathComponent("page-dictionary-editing-\(suffix).png"))
             save(StylesPage(settings: Settings.shared).padding(32).frame(width: 760).background(Color.canvas).environment(\.colorScheme, scheme),
                  out.appendingPathComponent("page-styles-\(suffix).png"))
         }

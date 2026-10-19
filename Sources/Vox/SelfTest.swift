@@ -70,6 +70,7 @@ enum SelfTest {
             show("pause: '?' at a cut", pause("Can you update the README so that it?", "Explains how to install it."))
             show("pause: list item", pause("I need three things:", "1. Add sign in."))
             show("split finished", IncrementalCleaner.splitFinished("First fix the login bug on the settings page. Then deploy to staging and").map { "\($0.head) | \($0.tail)" } ?? "nil")
+            show("dictionary merge", DictionaryTerm.merged("code x, codecs", "Codex app,  code x ,"))
             show("split (one sentence)", IncrementalCleaner.splitFinished("So we should probably move it because Friday is a holiday.").map { "\($0.head) | \($0.tail)" } ?? "nil")
         }
     }
