@@ -2,101 +2,153 @@ import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 
-/// Global push-to-talk via a listen-only CGEventTap. Watches modifier changes (fn, right ⌥/⌘/⌃, shift, control)
-/// plus key-downs (for Esc and to notice when the trigger is being used as part of a normal shortcut).
+/// Global keys via one CGEventTap: the dictation key (a lone modifier: fn, or left/right ⌥ ⌘ ⌃), shift for
+/// Command mode, and your recorded shortcuts. The tap filters (with Accessibility) so a matched shortcut
+/// never reaches the app; without Accessibility it only listens and Carbon hot keys stand in for shortcuts.
 final class HotkeyMonitor {
-    enum Event {
+    enum Event: Equatable {
         case triggerDown(shift: Bool)
         case triggerUp
         case shiftWhileHeld
-        case otherKeyWhileHeld      // e.g. fn+← or fn+⌘: the user is doing a shortcut, not dictating
-        case escape
-        case keyDown
+        case otherKeyWhileHeld      // e.g. fn+← or fn+⌘ or a ⌘-click: the user is doing a shortcut, not dictating
+        case shortcut(ShortcutAction)
     }
 
     var handler: ((Event) -> Void)?
+    /// While Settings records a shortcut every key passes straight through and nothing fires.
+    static var paused = false
+    var trigger: () -> TriggerKey = { Settings.shared.trigger }
+    var shortcuts: () -> [ShortcutAction: Shortcut] = { Settings.shared.shortcuts }
+    /// Vox's own synthetic ⌘V must never trigger (or be eaten by) a shortcut. The self-test turns this off.
+    var ignoreOwnEvents = true
+
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
+    /// Set by start(); the self-test sets it to check the filtering decisions without a tap.
+    var filtering = false
     private var triggerHeld = false
+    /// Key-ups of swallowed shortcuts, so the app never sees half a keystroke.
+    private var swallowedUps: Set<Int64> = []
+    private var fallbackKeys: [GlobalHotKey] = []
 
-    private static let kFn: Int64 = 63, kROpt: Int64 = 61, kRCmd: Int64 = 54, kRCtrl: Int64 = 62
-    private static let kLShift: Int64 = 56, kRShift: Int64 = 60, kLCtrl: Int64 = 59, kLOpt: Int64 = 58, kEsc: Int64 = 53
+    private static let kLShift: Int64 = 56, kRShift: Int64 = 60
+    private static let otherModifiers: UInt64 = Shortcut.command | Shortcut.option | Shortcut.control
 
-    // Device-dependent modifier bits (IOKit NX_DEVICE*KEYMASK) distinguish left from right.
-    private static let devROpt: UInt64 = 0x40, devRCmd: UInt64 = 0x10, devRCtrl: UInt64 = 0x2000
-
-    var isRunning: Bool { tap != nil }
+    /// True once the filtering tap runs (listen-only means Accessibility is still missing).
+    var isRunning: Bool { tap != nil && filtering }
 
     @discardableResult
     func start() -> Bool {
         stop()
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        let types: [CGEventType] = [.flagsChanged, .keyDown, .keyUp, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let mask = types.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) }
         let me = Unmanaged.passUnretained(self).toOpaque()
-        guard let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
-                                        eventsOfInterest: CGEventMask(mask),
-                                        callback: { _, type, event, ctx in
-                                            let m = Unmanaged<HotkeyMonitor>.fromOpaque(ctx!).takeUnretainedValue()
-                                            m.handle(type: type, event: event)
-                                            return Unmanaged.passUnretained(event)
-                                        }, userInfo: me) else { return false }
-        tap = t
+        let callback: CGEventTapCallBack = { _, type, event, ctx in
+            let m = Unmanaged<HotkeyMonitor>.fromOpaque(ctx!).takeUnretainedValue()
+            return m.tapped(type: type, event: event) ? nil : Unmanaged.passUnretained(event)
+        }
+        for options in [CGEventTapOptions.defaultTap, .listenOnly] {
+            if let t = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: options,
+                                         eventsOfInterest: mask, callback: callback, userInfo: me) {
+                tap = t
+                filtering = options == .defaultTap
+                break
+            }
+        }
+        guard let t = tap else { return false }
         source = CFMachPortCreateRunLoopSource(nil, t, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: t, enable: true)
-        return true
+        refreshFallback()
+        NSLog("Vox: hotkeys \(filtering ? "filtering" : "listen-only, shortcuts via Carbon (no Accessibility)")")
+        return filtering
     }
 
     func stop() {
         if let t = tap { CGEvent.tapEnable(tap: t, enable: false) }
         if let s = source { CFRunLoopRemoveSource(CFRunLoopGetMain(), s, .commonModes) }
-        tap = nil; source = nil; triggerHeld = false
+        tap = nil; source = nil; triggerHeld = false; filtering = false
+        swallowedUps.removeAll()
+        fallbackKeys.removeAll()
     }
 
-    private func handle(type: CGEventType, event: CGEvent) {
+    /// Carbon hot keys for the shortcuts when the tap can't filter. Call again after shortcuts change.
+    func refreshFallback() {
+        fallbackKeys.removeAll()
+        guard tap != nil, !filtering else { return }
+        for (i, (action, sc)) in shortcuts().sorted(by: { $0.key.rawValue < $1.key.rawValue }).enumerated() where action.swallows {
+            fallbackKeys.append(GlobalHotKey(keyCode: sc.keyCode, modifiers: sc.carbonModifiers, id: UInt32(10 + i)) { [weak self] in
+                guard !HotkeyMonitor.paused else { return }
+                self?.handler?(.shortcut(action))
+            })
+        }
+    }
+
+    /// Runs inside the tap, which holds up the user's typing, so it only decides and defers the work.
+    private func tapped(type: CGEventType, event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
-            return
+            return false
         }
-        let code = event.getIntegerValueField(.keyboardEventKeycode)
-        let flags = event.flags
-        let raw = flags.rawValue
-
-        if type == .keyDown {
-            if code == Self.kEsc { emit(.escape); return }
-            emit(triggerHeld ? .otherKeyWhileHeld : .keyDown)
-            return
+        if ignoreOwnEvents, event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()) { return false }
+        var events: [Event] = []
+        let swallow = process(type: type, code: event.getIntegerValueField(.keyboardEventKeycode),
+                              flags: event.flags.rawValue,
+                              autorepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0) { events.append($0) }
+        if !events.isEmpty {
+            DispatchQueue.main.async { [weak self] in for e in events { self?.handler?(e) } }
         }
-        guard type == .flagsChanged else { return }
-
-        let trigger = Settings.shared.trigger
-        let isTriggerKey: Bool
-        let down: Bool
-        switch trigger {
-        case .fn: isTriggerKey = code == Self.kFn; down = flags.contains(.maskSecondaryFn)
-        case .rightOption: isTriggerKey = code == Self.kROpt; down = raw & Self.devROpt != 0
-        case .rightCommand: isTriggerKey = code == Self.kRCmd; down = raw & Self.devRCmd != 0
-        case .rightControl: isTriggerKey = code == Self.kRCtrl; down = raw & Self.devRCtrl != 0
-        }
-        if isTriggerKey {
-            if down && !triggerHeld {
-                triggerHeld = true
-                emit(.triggerDown(shift: flags.contains(.maskShift)))
-            } else if !down && triggerHeld {
-                triggerHeld = false
-                emit(.triggerUp)
-            }
-            return
-        }
-        guard triggerHeld else { return }
-        if code == Self.kLShift || code == Self.kRShift {
-            if flags.contains(.maskShift) { emit(.shiftWhileHeld) }
-        } else if !flags.intersection([.maskCommand, .maskAlternate, .maskControl]).isEmpty, trigger == .fn {
-            // Another modifier joined fn: it's a shortcut (fn+⌘…), not dictation.
-            emit(.otherKeyWhileHeld)
-        }
+        return swallow
     }
 
-    private func emit(_ e: Event) { handler?(e) }
+    /// What one event means. Returns true to keep it from the app. Only touches the held-key state, so the
+    /// self-test can drive it with made-up events.
+    func process(type: CGEventType, code: Int64, flags: UInt64, autorepeat: Bool, emit: (Event) -> Void) -> Bool {
+        if Self.paused { triggerHeld = false; return false }
+        switch type {
+        case .keyDown:
+            if let (action, _) = shortcuts().first(where: { $0.value.matches(keyCode: code, flags: flags) }) {
+                if action.swallows && !filtering { return false }      // the Carbon fallback handles it
+                if !autorepeat {
+                    if triggerHeld && action != .cancel { emit(.otherKeyWhileHeld) }
+                    emit(.shortcut(action))
+                }
+                guard action.swallows else { return false }
+                swallowedUps.insert(code)
+                return true
+            }
+            if triggerHeld { emit(.otherKeyWhileHeld) }
+            return false
+        case .keyUp:
+            return swallowedUps.remove(code) != nil
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            if triggerHeld { emit(.otherKeyWhileHeld) }
+            return false
+        case .flagsChanged:
+            let t = trigger()
+            if code == Int64(t.keyCode) {
+                let down = flags & t.downMask != 0
+                if down && !triggerHeld {
+                    triggerHeld = true
+                    emit(.triggerDown(shift: flags & Shortcut.shift != 0))
+                } else if !down && triggerHeld {
+                    triggerHeld = false
+                    emit(.triggerUp)
+                }
+                return false
+            }
+            guard triggerHeld else { return false }
+            if code == Self.kLShift || code == Self.kRShift {
+                if flags & Shortcut.shift != 0 { emit(.shiftWhileHeld) }
+            } else if flags & Self.otherModifiers & ~t.family != 0 {
+                // Another modifier joined the dictation key: it's a shortcut (fn+⌘…), not dictation.
+                emit(.otherKeyWhileHeld)
+            }
+            return false
+        default:
+            return false
+        }
+    }
 
     // MARK: Permissions
 
@@ -111,7 +163,7 @@ final class HotkeyMonitor {
     static func promptInputMonitoring() { _ = CGRequestListenEventAccess() }
 }
 
-/// Classic Carbon hot key (consumes the keystroke) — used for ⌃⌘V "paste last dictation".
+/// Classic Carbon hot key (consumes the keystroke). Only a fallback: it can't tell left ⌘ from right ⌘.
 final class GlobalHotKey {
     private var ref: EventHotKeyRef?
     private static var handlers: [UInt32: () -> Void] = [:]

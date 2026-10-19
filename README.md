@@ -58,12 +58,14 @@ Onboarding walks you through Microphone, Accessibility and Input Monitoring, pic
 | Action | Keys (default trigger: fn) |
 |---|---|
 | Dictate | tap **fn**, talk, tap **fn** again to finish |
-| Hold to talk (Settings › Input) | hold **fn**, talk, release; **double-tap fn** for hands-free |
+| Hold to talk (Settings › Shortcuts) | hold **fn**, talk, release; **double-tap fn** for hands-free |
 | Command mode | select text, press **fn + ⇧**, say "make this shorter". With nothing selected, it writes new text |
 | Send | end with "**press enter**" |
 | Undo a sentence | "**scratch that**" |
 | Paste last again | **⌃⌘V** |
 | Cancel | **Esc** |
+
+Every key is yours to change: Settings › **Shortcuts** records the dictation key (fn, or a left or right ⌘ ⌥ ⌃), paste last, paste original and cancel. Shortcuts remember which side you pressed, so left ⌘ ⌥ V leaves right ⌘ ⌥ V alone, and a matched shortcut never reaches the app. `Vox --test-keys` checks them all, including a live run of the event tap.
 
 ## How it's built
 

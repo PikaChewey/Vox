@@ -2,26 +2,61 @@ import Foundation
 import ServiceManagement
 import SwiftUI
 
-/// Which physical key acts as push-to-talk. All are modifier keys so they never type a character.
+/// Which physical key starts dictation. All are modifier keys so they never type a character.
 enum TriggerKey: String, CaseIterable, Identifiable, Codable {
-    case fn, rightOption, rightCommand, rightControl
+    case fn, rightOption, rightCommand, rightControl, leftOption, leftCommand, leftControl
     var id: String { rawValue }
+    /// The four offered in onboarding; Settings can record any of them.
+    static let common: [TriggerKey] = [.fn, .rightOption, .rightCommand, .rightControl]
+
+    var keyCode: Int {
+        switch self {
+        case .fn: return 63
+        case .rightOption: return 61
+        case .rightCommand: return 54
+        case .rightControl: return 62
+        case .leftOption: return 58
+        case .leftCommand: return 55
+        case .leftControl: return 59
+        }
+    }
+    init?(keyCode: Int) {
+        guard let k = Self.allCases.first(where: { $0.keyCode == keyCode }) else { return nil }
+        self = k
+    }
+    /// The CGEventFlags bit that is set while this exact key is down (device-dependent bits tell sides apart).
+    var downMask: UInt64 {
+        switch self {
+        case .fn: return 0x800000
+        case .rightOption: return 0x40
+        case .rightCommand: return 0x10
+        case .rightControl: return 0x2000
+        case .leftOption: return 0x20
+        case .leftCommand: return 0x08
+        case .leftControl: return 0x01
+        }
+    }
+    /// The key's generic modifier bit (none for fn).
+    var family: UInt64 {
+        switch self {
+        case .fn: return 0
+        case .rightOption, .leftOption: return 0x80000
+        case .rightCommand, .leftCommand: return 0x100000
+        case .rightControl, .leftControl: return 0x40000
+        }
+    }
     var label: String {
         switch self {
         case .fn: return "fn"
         case .rightOption: return "Right ⌥"
         case .rightCommand: return "Right ⌘"
         case .rightControl: return "Right ⌃"
+        case .leftOption: return "Left ⌥"
+        case .leftCommand: return "Left ⌘"
+        case .leftControl: return "Left ⌃"
         }
     }
-    var keycap: String {
-        switch self {
-        case .fn: return "fn"
-        case .rightOption: return "⌥"
-        case .rightCommand: return "⌘"
-        case .rightControl: return "⌃"
-        }
-    }
+    var keycap: String { self == .fn ? "fn" : label.lowercased() }
 }
 
 enum ASRModelChoice: String, CaseIterable, Identifiable, Codable {
@@ -194,6 +229,8 @@ final class Settings: ObservableObject, @unchecked Sendable {
     @Published var trigger: TriggerKey { didSet { save("trigger", trigger.rawValue) } }
     /// Off (default): tap the key to start, tap again to finish. On: hold while you talk, double-tap for hands-free.
     @Published var holdToTalk: Bool { didSet { save("holdToTalk", holdToTalk) } }
+    /// Recorded shortcuts. A missing entry means "no shortcut".
+    @Published var shortcuts: [ShortcutAction: Shortcut] { didSet { saveJSON("shortcuts", shortcuts) } }
     /// CoreAudio UID of the preferred mic; empty = automatic (avoids Bluetooth headset mics).
     @Published var micUID: String { didSet { save("micUID", micUID) } }
     @Published var asrModel: ASRModelChoice { didSet { save("asrModel", asrModel.rawValue) } }
@@ -235,6 +272,7 @@ final class Settings: ObservableObject, @unchecked Sendable {
     private init() {
         trigger = TriggerKey(rawValue: d.string(forKey: "trigger") ?? "") ?? .fn
         holdToTalk = d.object(forKey: "holdToTalk") as? Bool ?? false
+        shortcuts = Self.loadJSON(d, "shortcuts") ?? ShortcutAction.defaults
         micUID = d.string(forKey: "micUID") ?? ""
         asrModel = ASRModelChoice(rawValue: d.string(forKey: "asrModel") ?? "") ?? .v2
         vocabularyBoosting = d.object(forKey: "vocabularyBoosting") as? Bool ?? false

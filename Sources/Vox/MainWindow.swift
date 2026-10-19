@@ -99,6 +99,23 @@ struct HomePage: View {
     @ObservedObject var settings = Settings.shared
     @State private var shared = false
 
+    /// What each key does, from the current settings (recorded shortcuts included).
+    private var keyRows: [([String], String)] {
+        let k = settings.trigger.keycap
+        var rows: [([String], String)] = settings.holdToTalk
+            ? [([k], "Hold, talk, let go. Words appear in the notch as you speak."),
+               ([k, k], "Double-tap for hands-free. Tap again to finish.")]
+            : [([k], "Tap, talk, tap again to finish. Words appear in the notch as you speak.")]
+        rows.append(([k, "⇧"], "Command: rewrite the selected text by voice."))
+        let texts: [ShortcutAction: String] = [.pasteLast: "Paste your last dictation again.",
+                                               .pasteOriginal: "Paste your last dictation without the AI edits.",
+                                               .cancel: "Cancel while dictating."]
+        for a in ShortcutAction.allCases {
+            if let sc = settings.shortcuts[a] { rows.append((sc.keys, texts[a] ?? a.title)) }
+        }
+        return rows
+    }
+
     var body: some View {
         // Each of these scans the history: compute once per render.
         let apps = history.topApps
@@ -133,14 +150,10 @@ struct HomePage: View {
             }
 
             InkGroup("Keys") {
-                if settings.holdToTalk {
-                    KeyRow(keys: [settings.trigger.keycap], text: "Hold, talk, let go. Words appear in the notch as you speak.")
-                    KeyRow(keys: [settings.trigger.keycap, settings.trigger.keycap], text: "Double-tap for hands-free. Tap again to finish.")
-                } else {
-                    KeyRow(keys: [settings.trigger.keycap], text: "Tap, talk, tap again to finish. Words appear in the notch as you speak.")
+                let rows = keyRows
+                ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
+                    KeyRow(keys: r.0, text: r.1, last: i == rows.count - 1)
                 }
-                KeyRow(keys: [settings.trigger.keycap, "⇧"], text: "Command: rewrite the selected text by voice.")
-                KeyRow(keys: ["⌃", "⌘", "V"], text: "Paste your last dictation again.", last: true)
             }
 
             if !apps.isEmpty {
@@ -173,7 +186,7 @@ private struct KeyRow: View {
     var last = false
     var body: some View {
         HStack(spacing: 14) {
-            KeyCombo(keys: keys).frame(width: 78, alignment: .leading)
+            KeyCombo(keys: keys).frame(width: 150, alignment: .leading)
             Text(text).font(.system(size: 12.5)).foregroundStyle(Color.ink2)
             Spacer(minLength: 0)
         }
@@ -437,6 +450,11 @@ struct SettingsPage: View {
     @State private var micOK = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     @State private var mics = AudioDevices.inputDevices()
     @State private var openAtLogin = LoginItem.isEnabled
+    @ObservedObject private var recorder = KeyRecorder.shared
+
+    private func problem(_ t: KeyRecorder.Target) -> String? {
+        recorder.problem?.target == t ? recorder.problem?.text : nil
+    }
     @State private var loginNeedsApproval = LoginItem.needsApproval
     @State private var loginError: String?
 
@@ -489,15 +507,35 @@ struct SettingsPage: View {
                 }
             }
 
-            InkGroup("Input") {
-                LabeledRow("Key", detail: settings.trigger == .fn ? "Set Keyboard › “Press 🌐 key to” › Do Nothing." : nil) {
-                    InkSegmented(selection: $settings.trigger, options: TriggerKey.allCases.map { ($0, $0.label) })
+            InkGroup("Shortcuts", trailing: AnyView(
+                Button("Restore defaults") {
+                    recorder.stop()
+                    settings.shortcuts = ShortcutAction.defaults
+                }
+                .buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Color.ink3)
+                .disabled(settings.shortcuts == ShortcutAction.defaults))) {
+                LabeledRow("Dictation key", detail: problem(.trigger) ?? (settings.trigger == .fn
+                           ? "Set Keyboard › “Press 🌐 key to” › Do Nothing. Click to record another key."
+                           : "Click, then press fn or a left or right ⌘ ⌥ ⌃.")) {
+                    KeyField(target: .trigger, keys: [settings.trigger.keycap])
                 }
                 LabeledRow("Hold to talk", detail: settings.holdToTalk
                            ? "Hold the key while you talk, let go to paste. Double-tap for hands-free."
                            : "Off: tap the key to start, tap again to finish. No need to hold it.") {
                     InkSwitch(isOn: $settings.holdToTalk)
                 }
+                LabeledRow("Command mode", detail: "The dictation key with ⇧. Rewrites the selection, or writes something new.") {
+                    KeyCombo(keys: [settings.trigger.keycap, "⇧"]).frame(minWidth: 136)
+                }
+                ForEach(ShortcutAction.allCases) { a in
+                    LabeledRow(a.title, detail: problem(.action(a)) ?? a.detail + " Click to record, ⌫ to clear.",
+                               last: a == ShortcutAction.allCases.last) {
+                        KeyField(target: .action(a), keys: settings.shortcuts[a]?.keys)
+                    }
+                }
+            }
+
+            InkGroup("Input") {
                 LabeledRow("Microphone", detail: "Automatic skips Bluetooth headset mics, so AirPods keep their sound quality.") {
                     Picker("", selection: $settings.micUID) {
                         Text("Automatic").tag("")

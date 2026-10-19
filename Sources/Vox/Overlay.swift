@@ -389,7 +389,7 @@ struct Island: View {
 struct HandsFreeHint: View {
     var body: some View {
         HStack(spacing: 14) {
-            item("esc", "cancel")
+            if let c = Settings.shared.shortcuts[.cancel] { item(c.label, "cancel") }
             item(Settings.shared.trigger.keycap, "done")
         }
         .frame(height: 16)

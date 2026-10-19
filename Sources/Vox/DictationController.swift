@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import AVFoundation
 import Foundation
 
@@ -10,6 +11,7 @@ import Foundation
 ///   • fn + ⇧                            → Command mode: rewrite the selection, or write something new
 ///   • Esc while recording               → cancel
 ///   • ⌃⌘V                               → paste your last dictation again
+///   (Settings › Shortcuts records your own for the key, paste last, paste original and cancel.)
 @MainActor
 final class DictationController: ObservableObject {
     enum Mode: String { case dictate, command }
@@ -28,7 +30,7 @@ final class DictationController: ObservableObject {
     private let recorder = AudioRecorder()
     private let hotkeys = HotkeyMonitor()
     private let watcher = CorrectionWatcher()
-    private var pasteLastKey: GlobalHotKey?
+    private var shortcutWatch: AnyCancellable?
 
     private var locked = false
     private var pressTime = Date()
@@ -49,9 +51,8 @@ final class DictationController: ObservableObject {
         AudioDevices.unduck()   // in case a previous run crashed mid-dictation
         hotkeys.handler = { [weak self] e in self?.handle(e) }
         startHotkeys()
-        pasteLastKey = GlobalHotKey(keyCode: 9 /* V */, modifiers: 0x1000 | 0x0100 /* ⌃⌘ */, id: 1) { [weak self] in
-            self?.pasteLast()
-        }
+        shortcutWatch = Settings.shared.$shortcuts.dropFirst().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.hotkeys.refreshFallback() }
         Task { await self.loadModels() }
     }
 
@@ -137,7 +138,11 @@ final class DictationController: ObservableObject {
             }
         case .otherKeyWhileHeld:
             if state == .recording, !locked { cancel(silently: true) }
-        case .escape:
+        case .shortcut(.pasteLast):
+            pasteLast()
+        case .shortcut(.pasteOriginal):
+            pasteLastOriginal()
+        case .shortcut(.cancel):
             if state == .recording { cancel(silently: false) }
             else if state == .processing {
                 // Changed your mind while it was finishing: drop the result.
@@ -145,8 +150,6 @@ final class DictationController: ObservableObject {
                 state = .idle
                 overlay.show(.message("Cancelled", isError: false))
             }
-        case .keyDown:
-            break
         }
     }
 

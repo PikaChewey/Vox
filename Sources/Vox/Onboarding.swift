@@ -139,7 +139,7 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             PageHeader(title: "Your key", subtitle: "Tap it to talk, tap again to paste. Prefer holding? Turn on Hold to talk in Settings.")
             HStack(spacing: 10) {
-                ForEach(TriggerKey.allCases) { k in
+                ForEach(TriggerKey.common) { k in
                     let on = settings.trigger == k
                     Button { withAnimation(Motion.micro) { settings.trigger = k } } label: {
                         VStack(spacing: 10) {

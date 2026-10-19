@@ -11,6 +11,7 @@ struct VoxMain {
             return
         }
         if args.contains("--test-text") { SelfTest.text(); return }
+        if args.contains("--test-keys") { exit(KeyTest.run() ? 0 : 1) }
         if let i = args.firstIndex(of: "--asr-bench"), i + 1 < args.count {
             let sem = DispatchSemaphore(value: 0)
             Task.detached { await ASRBench.run(path: args[i + 1]); sem.signal() }
@@ -140,10 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         let open = item("Open Vox", #selector(openHome), key: "o")
         menu.addItem(open)
         let paste = item("Paste Last Dictation", #selector(pasteLast))
-        paste.keyEquivalent = "v"; paste.keyEquivalentModifierMask = [.control, .command]
+        showShortcut(.pasteLast, on: paste)
         paste.isEnabled = controller.lastText != nil || !h.entries.isEmpty
         menu.addItem(paste)
         let orig = item("Paste Original of Last (no AI edits)", #selector(pasteOriginal))
+        showShortcut(.pasteOriginal, on: orig)
         orig.isEnabled = controller.lastRaw != nil || !h.entries.isEmpty
         menu.addItem(orig)
         menu.addItem(.separator())
@@ -161,6 +163,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         v.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
         i.view = v
         return i
+    }
+
+    /// The menu can only show ⌃⌥⇧⌘ + one character, not which side; good enough as a reminder.
+    private func showShortcut(_ a: ShortcutAction, on i: NSMenuItem) {
+        guard let eq = Settings.shared.shortcuts[a]?.menuEquivalent else { return }
+        i.keyEquivalent = eq.key
+        i.keyEquivalentModifierMask = eq.mask
     }
 
     private func disabled(_ t: String) -> NSMenuItem {
