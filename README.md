@@ -6,7 +6,7 @@
 > italic), and long dictations finish in under a second: Vox transcribes and polishes each phrase while you're
 > still talking. A 55-second monologue goes from key-up to pasted text in ≈1.1 s.
 
-Vox is a free, open-source, 100% on-device Wispr Flow alternative for macOS. Hold a key, speak messy, and clean text lands wherever your cursor is.
+Vox is a free, open-source, 100% on-device Wispr Flow alternative for macOS. Tap a key, speak messy, and clean text lands wherever your cursor is.
 
 No account, no subscription, no word limits, no cloud. Your voice never leaves your Mac.
 
@@ -57,9 +57,9 @@ Onboarding walks you through Microphone, Accessibility and Input Monitoring, pic
 
 | Action | Keys (default trigger: fn) |
 |---|---|
-| Dictate | hold **fn**, talk, release |
-| Hands-free | **double-tap fn**, talk, tap fn to finish |
-| Command mode | select text, hold **fn + ⇧**, say "make this shorter". With nothing selected, it writes new text |
+| Dictate | tap **fn**, talk, tap **fn** again to finish |
+| Hold to talk (Settings › Input) | hold **fn**, talk, release; **double-tap fn** for hands-free |
+| Command mode | select text, press **fn + ⇧**, say "make this shorter". With nothing selected, it writes new text |
 | Send | end with "**press enter**" |
 | Undo a sentence | "**scratch that**" |
 | Paste last again | **⌃⌘V** |

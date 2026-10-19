@@ -192,6 +192,8 @@ final class Settings: ObservableObject, @unchecked Sendable {
 
     // Input
     @Published var trigger: TriggerKey { didSet { save("trigger", trigger.rawValue) } }
+    /// Off (default): tap the key to start, tap again to finish. On: hold while you talk, double-tap for hands-free.
+    @Published var holdToTalk: Bool { didSet { save("holdToTalk", holdToTalk) } }
     /// CoreAudio UID of the preferred mic; empty = automatic (avoids Bluetooth headset mics).
     @Published var micUID: String { didSet { save("micUID", micUID) } }
     @Published var asrModel: ASRModelChoice { didSet { save("asrModel", asrModel.rawValue) } }
@@ -232,6 +234,7 @@ final class Settings: ObservableObject, @unchecked Sendable {
 
     private init() {
         trigger = TriggerKey(rawValue: d.string(forKey: "trigger") ?? "") ?? .fn
+        holdToTalk = d.object(forKey: "holdToTalk") as? Bool ?? false
         micUID = d.string(forKey: "micUID") ?? ""
         asrModel = ASRModelChoice(rawValue: d.string(forKey: "asrModel") ?? "") ?? .v2
         vocabularyBoosting = d.object(forKey: "vocabularyBoosting") as? Bool ?? false

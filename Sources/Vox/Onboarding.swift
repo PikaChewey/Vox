@@ -77,7 +77,7 @@ struct OnboardingView: View {
             WelcomeIsland()
             VStack(spacing: 10) {
                 Text("Talk. It types.").font(.system(size: 34, weight: .semibold)).tracking(-0.8)
-                Text("Hold a key, speak naturally, and clean text lands wherever your cursor is.\nFree, unlimited, and entirely on this Mac.")
+                Text("Tap a key, speak naturally, and clean text lands wherever your cursor is.\nFree, unlimited, and entirely on this Mac.")
                     .font(.system(size: 13.5)).foregroundStyle(Color.ink3).multilineTextAlignment(.center)
             }
             HStack(alignment: .top, spacing: 0) {
@@ -102,16 +102,16 @@ struct OnboardingView: View {
 
     private var permissions: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PageHeader(title: "Three permissions", subtitle: "macOS asks for each once. Vox only listens while you hold the key.")
+            PageHeader(title: "Three permissions", subtitle: "macOS asks for each once. Vox only listens while you're dictating.")
             InkGroup {
-                permissionRow("Microphone", "Hears you while you hold the key.", mic) {
+                permissionRow("Microphone", "Hears you only while you're dictating.", mic) {
                     Task { mic = await AudioRecorder.requestPermission() }
                 }
                 permissionRow("Accessibility", "Pastes at your cursor and reads which app you're in.", ax) {
                     HotkeyMonitor.promptAccessibility()
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                 }
-                permissionRow("Input Monitoring", "Notices when you hold the key.", im, last: true) {
+                permissionRow("Input Monitoring", "Notices when you press the key.", im, last: true) {
                     HotkeyMonitor.promptInputMonitoring()
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
                 }
@@ -137,7 +137,7 @@ struct OnboardingView: View {
 
     private var key: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PageHeader(title: "Your key", subtitle: "Hold it to talk, let go to paste.")
+            PageHeader(title: "Your key", subtitle: "Tap it to talk, tap again to paste. Prefer holding? Turn on Hold to talk in Settings.")
             HStack(spacing: 10) {
                 ForEach(TriggerKey.allCases) { k in
                     let on = settings.trigger == k
@@ -179,7 +179,7 @@ struct OnboardingView: View {
 
     private var tryIt: some View {
         VStack(alignment: .leading, spacing: 16) {
-            PageHeader(title: "Try it", subtitle: "Click the box, hold your key, and say the line below. Watch the notch while you talk.")
+            PageHeader(title: "Try it", subtitle: "Click the box, tap your key, say the line below, then tap it again. Watch the notch while you talk.")
             HStack(spacing: 10) {
                 KeyCombo(keys: [settings.trigger.keycap], large: true)
                 Text("“Um, so can you make the login button blue — no wait, green — and also add a hover state”")

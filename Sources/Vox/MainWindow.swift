@@ -133,8 +133,12 @@ struct HomePage: View {
             }
 
             InkGroup("Keys") {
-                KeyRow(keys: [settings.trigger.keycap], text: "Hold, talk, let go. Words appear in the notch as you speak.")
-                KeyRow(keys: [settings.trigger.keycap, settings.trigger.keycap], text: "Double-tap for hands-free. Tap again to finish.")
+                if settings.holdToTalk {
+                    KeyRow(keys: [settings.trigger.keycap], text: "Hold, talk, let go. Words appear in the notch as you speak.")
+                    KeyRow(keys: [settings.trigger.keycap, settings.trigger.keycap], text: "Double-tap for hands-free. Tap again to finish.")
+                } else {
+                    KeyRow(keys: [settings.trigger.keycap], text: "Tap, talk, tap again to finish. Words appear in the notch as you speak.")
+                }
                 KeyRow(keys: [settings.trigger.keycap, "⇧"], text: "Command: rewrite the selected text by voice.")
                 KeyRow(keys: ["⌃", "⌘", "V"], text: "Paste your last dictation again.", last: true)
             }
@@ -280,7 +284,7 @@ struct HistoryPage: View {
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.hairline))
 
             if grouped.isEmpty {
-                Text(query.isEmpty ? "Nothing yet. Hold \(settings.trigger.label) in any app and start talking." : "No matches.")
+                Text(query.isEmpty ? "Nothing yet. \(settings.holdToTalk ? "Hold" : "Tap") \(settings.trigger.label) in any app and start talking." : "No matches.")
                     .font(.system(size: 12.5)).foregroundStyle(Color.ink3)
                     .frame(maxWidth: .infinity).padding(.vertical, 48)
             }
@@ -470,14 +474,14 @@ struct SettingsPage: View {
             }
 
             InkGroup("Permissions") {
-                LabeledRow("Microphone", detail: "Only while you hold the key.") { permission(micOK) { Task { micOK = await AudioRecorder.requestPermission() } } }
+                LabeledRow("Microphone", detail: "Only while you're dictating.") { permission(micOK) { Task { micOK = await AudioRecorder.requestPermission() } } }
                 LabeledRow("Accessibility", detail: "Pastes at your cursor and reads which app you're in.") {
                     permission(axOK) {
                         HotkeyMonitor.promptAccessibility()
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                 }
-                LabeledRow("Input Monitoring", detail: "Notices when you hold the key.", last: true) {
+                LabeledRow("Input Monitoring", detail: "Notices when you press the key.", last: true) {
                     permission(imOK) {
                         HotkeyMonitor.promptInputMonitoring()
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
@@ -488,6 +492,11 @@ struct SettingsPage: View {
             InkGroup("Input") {
                 LabeledRow("Key", detail: settings.trigger == .fn ? "Set Keyboard › “Press 🌐 key to” › Do Nothing." : nil) {
                     InkSegmented(selection: $settings.trigger, options: TriggerKey.allCases.map { ($0, $0.label) })
+                }
+                LabeledRow("Hold to talk", detail: settings.holdToTalk
+                           ? "Hold the key while you talk, let go to paste. Double-tap for hands-free."
+                           : "Off: tap the key to start, tap again to finish. No need to hold it.") {
+                    InkSwitch(isOn: $settings.holdToTalk)
                 }
                 LabeledRow("Microphone", detail: "Automatic skips Bluetooth headset mics, so AirPods keep their sound quality.") {
                     Picker("", selection: $settings.micUID) {

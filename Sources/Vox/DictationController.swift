@@ -5,9 +5,9 @@ import Foundation
 /// The whole pipeline: hotkey → mic → Parakeet → cleanup → paste at cursor.
 ///
 /// Controls (default trigger: fn):
-///   • Hold fn, talk, release            → dictate
-///   • Double-tap fn                     → hands-free; tap fn again to finish
-///   • Hold fn + ⇧                       → Command mode: rewrite the selection, or write something new
+///   • Tap fn, talk, tap fn again        → dictate (default; the recording stays locked between taps)
+///   • With "Hold to talk" on: hold fn, talk, release; double-tap fn for hands-free
+///   • fn + ⇧                            → Command mode: rewrite the selection, or write something new
 ///   • Esc while recording               → cancel
 ///   • ⌃⌘V                               → paste your last dictation again
 @MainActor
@@ -89,7 +89,9 @@ final class DictationController: ObservableObject {
         switch e {
         case .triggerDown(let shift):
             if state == .recording {
-                if pendingTapDiscard != nil, let t = lastShortTap, Date().timeIntervalSince(t) < doubleTapWindow {
+                if !Settings.shared.holdToTalk {
+                    if locked { finish() }
+                } else if pendingTapDiscard != nil, let t = lastShortTap, Date().timeIntervalSince(t) < doubleTapWindow {
                     // Second tap of a double-tap → hands-free.
                     pendingTapDiscard?.cancel(); pendingTapDiscard = nil
                     locked = true
@@ -115,7 +117,12 @@ final class DictationController: ObservableObject {
         case .triggerUp:
             guard state == .recording, !locked else { return }
             let held = Date().timeIntervalSince(pressTime)
-            if held < tapThreshold {
+            if !Settings.shared.holdToTalk {
+                // Tap to talk: letting go locks the recording (a shortcut like fn+← has already cancelled it).
+                // Before the arm delay the island isn't up yet; arming shows it locked.
+                locked = true
+                if armWork == nil { overlay.show(phaseForRecording()) }
+            } else if held < tapThreshold {
                 // Maybe the first half of a double-tap. Keep recording briefly; discard if no second tap comes.
                 lastShortTap = Date()
                 let w = DispatchWorkItem { [weak self] in

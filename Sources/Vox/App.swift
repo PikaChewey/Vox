@@ -132,7 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(header(controller.speechReady ? "Vox is ready" : controller.statusLine,
                             sub: "\(h.totalWords.formatted()) words · \(h.wordsToday.formatted()) today · \(h.streakDays)-day streak"))
         menu.addItem(.separator())
-        menu.addItem(disabled("Hold \(s.trigger.label) to talk  ·  double-tap for hands-free  ·  + ⇧ command"))
+        menu.addItem(disabled(s.holdToTalk
+            ? "Hold \(s.trigger.label) to talk  ·  double-tap for hands-free  ·  + ⇧ command"
+            : "Tap \(s.trigger.label) to talk, tap again to finish  ·  + ⇧ command"))
         menu.addItem(.separator())
 
         let open = item("Open Vox", #selector(openHome), key: "o")
